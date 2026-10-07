@@ -43,6 +43,14 @@ namespace PlantMaster.Services
 
 
 
+        /// <summary>
+        /// 网关连接状态发生变化时通知上层。
+        /// </summary>
+        public event EventHandler<GatewayConnectionStateChangedEventArgs>?
+            ConnectionStateChanged;
+
+
+
 
 
         public GatewayService(
@@ -160,6 +168,46 @@ namespace PlantMaster.Services
 
 
 
+        /// <summary>
+        /// 获取指定网关当前的运行状态。
+        /// </summary>
+        public bool IsOnline(string id)
+        {
+            GatewayRuntime runtime =
+                GetRuntime(id);
+
+            return runtime != null
+                && runtime.IsOnline;
+        }
+
+
+
+        /// <summary>
+        /// 统一更新运行状态并发布状态事件。
+        /// </summary>
+        private void UpdateOnlineState(
+            GatewayRuntime runtime,
+            bool isOnline)
+        {
+            if (runtime.IsOnline == isOnline)
+            {
+                return;
+            }
+
+            runtime.IsOnline =
+                isOnline;
+
+            ConnectionStateChanged?.Invoke(
+                this,
+                new GatewayConnectionStateChangedEventArgs(
+                    runtime.Setting.Id,
+                    isOnline
+                )
+            );
+        }
+
+
+
 
 
 
@@ -200,8 +248,10 @@ namespace PlantMaster.Services
 
 
 
-                runtime.IsOnline =
-                    true;
+                UpdateOnlineState(
+                    runtime,
+                    true
+                );
 
 
 
@@ -213,8 +263,10 @@ namespace PlantMaster.Services
             catch (Exception ex)
             {
 
-                runtime.IsOnline =
-                    false;
+                UpdateOnlineState(
+                    runtime,
+                    false
+                );
 
 
                 logService.Error(
@@ -257,8 +309,10 @@ namespace PlantMaster.Services
 
 
 
-            runtime.IsOnline =
-                false;
+            UpdateOnlineState(
+                runtime,
+                false
+            );
 
 
 
@@ -298,6 +352,13 @@ namespace PlantMaster.Services
 
             await runtime.Client
                 .DisconnectAsync();
+
+
+
+            UpdateOnlineState(
+                runtime,
+                false
+            );
 
 
 

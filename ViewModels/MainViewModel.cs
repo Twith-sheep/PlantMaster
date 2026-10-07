@@ -5,6 +5,7 @@ using PlantMaster.Services;
 using System;
 using System.Collections.ObjectModel;
 using System.Linq;
+using System.Threading;
 using System.Windows.Input;
 
 
@@ -35,6 +36,10 @@ namespace PlantMaster.ViewModels
 
         //文件选择
         private readonly FileDialogService fileDialogService;
+
+
+        // 创建ViewModel时的UI同步上下文
+        private readonly SynchronizationContext? uiSynchronizationContext;
 
 
 
@@ -124,9 +129,17 @@ namespace PlantMaster.ViewModels
                 configManager;
 
 
+            uiSynchronizationContext =
+                SynchronizationContext.Current;
+
+
 
             Gateways =
                 new ObservableCollection<GatewayViewModel>();
+
+
+            gatewayService.ConnectionStateChanged +=
+                GatewayService_ConnectionStateChanged;
 
 
 
@@ -192,7 +205,10 @@ namespace PlantMaster.ViewModels
             {
 
                 Gateways.Add(
-                    new GatewayViewModel(setting)
+                    new GatewayViewModel(
+                        setting,
+                        gatewayService.IsOnline(setting.Id)
+                    )
                 );
 
             }
@@ -266,7 +282,10 @@ namespace PlantMaster.ViewModels
             {
 
                 Gateways.Add(
-                    new GatewayViewModel(setting)
+                    new GatewayViewModel(
+                        setting,
+                        gatewayService.IsOnline(setting.Id)
+                    )
                 );
 
             }
@@ -277,6 +296,42 @@ namespace PlantMaster.ViewModels
                 $"刷新网关完成:{Gateways.Count}"
             );
 
+        }
+
+
+
+        /// <summary>
+        /// 将服务层的真实连接状态投影到界面状态。
+        /// </summary>
+        private void GatewayService_ConnectionStateChanged(
+            object? sender,
+            GatewayConnectionStateChangedEventArgs e)
+        {
+            void UpdateViewModel()
+            {
+                GatewayViewModel? gatewayViewModel =
+                    Gateways.FirstOrDefault(
+                        gateway => gateway.Setting.Id == e.GatewayId
+                    );
+
+                gatewayViewModel?.UpdateOnlineState(
+                    e.IsOnline
+                );
+            }
+
+
+            if (uiSynchronizationContext == null
+                || SynchronizationContext.Current == uiSynchronizationContext)
+            {
+                UpdateViewModel();
+                return;
+            }
+
+
+            uiSynchronizationContext.Post(
+                _ => UpdateViewModel(),
+                null
+            );
         }
 
 
