@@ -1,31 +1,22 @@
-﻿using PlantMaster.Communication;
+using PlantMaster.Communication;
+using System.Threading;
 
 
 namespace PlantMaster.Models
 {
-
     /// <summary>
-    /// 网关运行状态
+    /// 网关运行状态。
     ///
-    /// 保存：
-    /// 1.当前网关配置
-    /// 2.通信对象
-    /// 3.在线状态
-    ///
-    /// 不保存：
-    /// XML配置
+    /// 每个运行对象拥有独立的通信锁，
+    /// 保证同一网关的完整通信事务串行执行。
     /// </summary>
     public class GatewayRuntime
     {
+        private int isStopping;
 
 
         /// <summary>
-        /// 网关配置
-        ///
-        /// 用于知道：
-        /// IP
-        /// 端口
-        /// Id
+        /// 网关配置。
         /// </summary>
         public GatewaySetting Setting
         {
@@ -33,54 +24,67 @@ namespace PlantMaster.Models
         }
 
 
-
         /// <summary>
-        /// 通信客户端
-        ///
-        /// 负责TCP通信
+        /// 通信客户端仅允许在程序集内部由网关服务调度。
         /// </summary>
-        public ICommunicationClient Client
+        internal ICommunicationClient Client
         {
             get;
         }
 
 
+        /// <summary>
+        /// 每个网关独立的异步通信锁。
+        /// </summary>
+        internal SemaphoreSlim CommunicationSemaphore
+        {
+            get;
+        }
+
 
         /// <summary>
-        /// 当前连接状态
+        /// 当前连接状态。
         /// </summary>
         public bool IsOnline
         {
             get;
-            set;
+            internal set;
         }
 
 
-
         /// <summary>
-        /// 创建运行对象
-        ///
-        /// 配置 + 通信对象
-        /// 组成一个运行中的网关
+        /// 网关是否正在删除或关闭。
         /// </summary>
+        internal bool IsStopping
+        {
+            get
+            {
+                return Volatile.Read(ref isStopping) == 1;
+            }
+        }
+
+
         public GatewayRuntime(
             GatewaySetting setting,
             ICommunicationClient client)
         {
-
-            Setting =
-                setting;
-
-
-            Client =
-                client;
-
-
-            IsOnline =
-                false;
-
+            Setting = setting;
+            Client = client;
+            CommunicationSemaphore = new SemaphoreSlim(1, 1);
+            IsOnline = false;
         }
 
-    }
 
+        /// <summary>
+        /// 原子地将网关标记为停止状态。
+        /// </summary>
+        internal bool TryBeginStopping()
+        {
+            return Interlocked.CompareExchange(
+                ref isStopping,
+                1,
+                0
+            ) == 0;
+        }
+    }
 }

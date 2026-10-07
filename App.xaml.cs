@@ -2,6 +2,8 @@
 using PlantMaster.Infrastructure.Config.Interfaces;
 using PlantMaster.Infrastructure.Config.Readers;
 using PlantMaster.Services;
+using System;
+using System.Threading;
 using System.Windows;
 
 namespace PlantMaster
@@ -182,6 +184,37 @@ namespace PlantMaster
             // 启动日志定时保存
             LogSaveService.Start();
 
+        }
+
+
+
+        /// <summary>
+        /// 程序退出前停止所有网关，
+        /// 避免正在通信时直接释放TCP连接。
+        /// </summary>
+        protected override void OnExit(ExitEventArgs e)
+        {
+            try
+            {
+                using CancellationTokenSource shutdownSource =
+                    new CancellationTokenSource(
+                        TimeSpan.FromSeconds(15)
+                    );
+
+                GatewayService
+                    .ShutdownAsync(shutdownSource.Token)
+                    .GetAwaiter()
+                    .GetResult();
+            }
+            catch (Exception ex)
+            {
+                LogService.Error(
+                    $"程序关闭网关失败:{ex.Message}"
+                );
+            }
+
+
+            base.OnExit(e);
         }
 
 

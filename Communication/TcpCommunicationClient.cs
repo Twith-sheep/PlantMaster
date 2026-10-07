@@ -1,6 +1,7 @@
 ﻿using PlantMaster.Services;
 using System;
 using System.Net.Sockets;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace PlantMaster.Communication
@@ -28,7 +29,7 @@ namespace PlantMaster.Communication
         ///
         /// 负责底层Socket通信
         /// </summary>
-        private TcpClient tcpClient;
+        private TcpClient? tcpClient;
 
 
 
@@ -40,7 +41,7 @@ namespace PlantMaster.Communication
         ///
         /// 用于发送和接收数据
         /// </summary>
-        private NetworkStream networkStream;
+        private NetworkStream? networkStream;
 
 
 
@@ -100,42 +101,42 @@ namespace PlantMaster.Communication
         /// 记录日志
         /// 不影响程序继续运行
         /// </summary>
-        public async Task ConnectAsync()
+        public async Task ConnectAsync(
+            CancellationToken cancellationToken = default)
         {
+            try
+            {
+                TcpClient newClient =
+                    new TcpClient();
 
-            //try
-            //{
+                tcpClient = newClient;
 
-                tcpClient = new TcpClient();
-
-
-                await tcpClient.ConnectAsync(
+                await newClient.ConnectAsync(
                     ipAddress,
-                    port
+                    port,
+                    cancellationToken
                 );
 
-
                 networkStream =
-                    tcpClient.GetStream();
-
-
+                    newClient.GetStream();
 
                 logService.Info(
                     $"TCP连接成功 {ipAddress}:{port}"
                 );
+            }
+            catch (Exception ex)
+            {
+                networkStream?.Dispose();
+                tcpClient?.Dispose();
+                networkStream = null;
+                tcpClient = null;
 
-            //}
-            //catch (Exception ex)
-            //{
+                logService.Error(
+                    $"TCP连接失败 {ipAddress}:{port} {ex.Message}"
+                );
 
-            //    logService.Error(
-            //        $"TCP连接失败 {ipAddress}:{port} {ex.Message}"
-            //    );
-
-
-            //    tcpClient = null;
-
-            //}
+                throw;
+            }
 
         }
 
@@ -169,12 +170,14 @@ namespace PlantMaster.Communication
                 if (networkStream != null)
                 {
                     networkStream.Close();
+                    networkStream = null;
                 }
 
 
                 if (tcpClient != null)
                 {
                     tcpClient.Close();
+                    tcpClient = null;
                 }
 
 
@@ -210,7 +213,9 @@ namespace PlantMaster.Communication
         /// 没有连接：
         /// 直接取消发送
         /// </summary>
-        public async Task SendAsync(byte[] request)
+        public async Task SendAsync(
+            byte[] request,
+            CancellationToken cancellationToken = default)
         {
 
             if (!IsConnected)
@@ -221,7 +226,9 @@ namespace PlantMaster.Communication
                 );
 
 
-                return;
+                throw new InvalidOperationException(
+                    "TCP未连接，无法发送数据"
+                );
 
             }
 
@@ -230,10 +237,9 @@ namespace PlantMaster.Communication
             try
             {
 
-                await networkStream.WriteAsync(
-                    request,
-                    0,
-                    request.Length
+                await networkStream!.WriteAsync(
+                    request.AsMemory(),
+                    cancellationToken
                 );
 
             }
@@ -243,6 +249,8 @@ namespace PlantMaster.Communication
                 logService.Error(
                     $"TCP发送失败 {ex.Message}"
                 );
+
+                throw;
 
             }
 
@@ -258,7 +266,8 @@ namespace PlantMaster.Communication
         ///
         /// 未连接返回null
         /// </summary>
-        public async Task<byte[]> ReceiveAsync()
+        public async Task<byte[]> ReceiveAsync(
+            CancellationToken cancellationToken = default)
         {
 
             if (!IsConnected)
@@ -269,7 +278,9 @@ namespace PlantMaster.Communication
                 );
 
 
-                return null;
+                throw new InvalidOperationException(
+                    "TCP未连接，无法接收数据"
+                );
 
             }
 
@@ -284,10 +295,9 @@ namespace PlantMaster.Communication
 
 
                 int length =
-                    await networkStream.ReadAsync(
-                        buffer,
-                        0,
-                        buffer.Length
+                    await networkStream!.ReadAsync(
+                        buffer.AsMemory(),
+                        cancellationToken
                     );
 
 
@@ -316,7 +326,7 @@ namespace PlantMaster.Communication
                 );
 
 
-                return null;
+                throw;
 
             }
 

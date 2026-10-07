@@ -1,46 +1,38 @@
-﻿using PlantMaster.Communication;
+using PlantMaster.Communication;
 using PlantMaster.Models;
 using System;
-using System.Collections.Generic;
+using System.Collections.Concurrent;
+using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 
 
 namespace PlantMaster.Services
 {
-
     /// <summary>
-    /// 网关运行管理服务
+    /// 网关运行管理服务。
     ///
-    /// 负责：
-    /// 1.管理运行中的网关
-    /// 2.管理通信对象
-    /// 3.连接和断开
-    /// 4.更新运行状态
-    ///
-    /// 不负责：
-    /// 1.配置文件
-    /// 2.XML读取
-    /// 3.界面显示
+    /// 每个GatewayRuntime拥有独立的异步锁，
+    /// 同一网关的完整通信事务串行，
+    /// 不同网关之间可以并行。
     /// </summary>
     public class GatewayService
     {
+        private static readonly TimeSpan DefaultConnectionTimeout =
+            TimeSpan.FromSeconds(10);
+
+        private static readonly TimeSpan DefaultLifecycleTimeout =
+            TimeSpan.FromSeconds(10);
+
+        private static readonly TimeSpan DefaultTransactionTimeout =
+            TimeSpan.FromSeconds(30);
 
 
-        /// <summary>
-        /// 网关运行集合
-        ///
-        /// Key:
-        /// 网关Id
-        ///
-        /// Value:
-        /// 运行对象
-        /// </summary>
-        private readonly Dictionary<string, GatewayRuntime> runtimes;
-
-
+        private readonly ConcurrentDictionary<string, GatewayRuntime> runtimes;
 
         private readonly LogService logService;
 
+        private readonly CancellationTokenSource serviceLifetimeSource;
 
 
         /// <summary>
@@ -50,61 +42,32 @@ namespace PlantMaster.Services
             ConnectionStateChanged;
 
 
-
-
-
-        public GatewayService(
-            LogService logService)
+        public GatewayService(LogService logService)
         {
-
             runtimes =
-                new Dictionary<string, GatewayRuntime>();
-
+                new ConcurrentDictionary<string, GatewayRuntime>();
 
             this.logService =
                 logService;
 
+            serviceLifetimeSource =
+                new CancellationTokenSource();
         }
 
 
-
-
-
-
-
         /// <summary>
-        /// 添加运行网关
-        ///
-        /// 根据配置创建运行对象
-        ///
-        /// GatewaySetting
-        ///        |
-        ///        ↓
-        /// GatewayRuntime
+        /// 根据配置创建网关运行对象。
         /// </summary>
-        public void AddGateway(
-            GatewaySetting setting)
+        public void AddGateway(GatewaySetting setting)
         {
-
             if (setting == null)
             {
-                return;
-            }
-
-
-
-            if (runtimes.ContainsKey(setting.Id))
-            {
-
                 logService.Warn(
-                    $"网关已存在:{setting.Id}"
+                    "创建网关运对象失败:配置为空"
                 );
 
                 return;
-
             }
-
-
 
 
             ICommunicationClient client =
@@ -114,8 +77,6 @@ namespace PlantMaster.Services
                     logService
                 );
 
-
-
             GatewayRuntime runtime =
                 new GatewayRuntime(
                     setting,
@@ -123,49 +84,31 @@ namespace PlantMaster.Services
                 );
 
 
+            if (!runtimes.TryAdd(setting.Id, runtime))
+            {
+                logService.Warn(
+                    $"网关已存在:{setting.Id}"
+                );
 
-            runtimes.Add(
-                setting.Id,
-                runtime
-            );
-
+                return;
+            }
 
 
             logService.Info(
                 $"创建网关运行对象:{setting.Id}"
             );
-
         }
 
 
-
-
-
-
-
-
-
-        /// <summary>
-        /// 获取运行网关
-        /// </summary>
-        private GatewayRuntime GetRuntime(
-            string id)
+        private GatewayRuntime? GetRuntime(string id)
         {
-
-            if (runtimes.TryGetValue(
+            runtimes.TryGetValue(
                 id,
-                out GatewayRuntime runtime))
-            {
+                out GatewayRuntime? runtime
+            );
 
-                return runtime;
-
-            }
-
-
-            return null;
-
+            return runtime;
         }
-
 
 
         /// <summary>
@@ -173,7 +116,7 @@ namespace PlantMaster.Services
         /// </summary>
         public bool IsOnline(string id)
         {
-            GatewayRuntime runtime =
+            GatewayRuntime? runtime =
                 GetRuntime(id);
 
             return runtime != null
@@ -181,10 +124,6 @@ namespace PlantMaster.Services
         }
 
 
-
-        /// <summary>
-        /// 统一更新运行状态并发布状态事件。
-        /// </summary>
         private void UpdateOnlineState(
             GatewayRuntime runtime,
             bool isOnline)
@@ -194,108 +133,154 @@ namespace PlantMaster.Services
                 return;
             }
 
-            runtime.IsOnline =
-                isOnline;
 
-            ConnectionStateChanged?.Invoke(
-                this,
-                new GatewayConnectionStateChangedEventArgs(
-                    runtime.Setting.Id,
-                    isOnline
-                )
+            runtime.IsOnline = isOnline;
+
+
+            try
+            {
+                ConnectionStateChanged?.Invoke(
+                    this,
+                    new GatewayConnectionStateChangedEventArgs(
+                        runtime.Setting.Id,
+                        isOnline
+                    )
+                );
+            }
+            catch (Exception ex)
+            {
+                logService.Error(
+                    $"网关状态通知失败:{runtime.Setting.Id} {ex.Message}"
+                );
+            }
+        }
+
+
+        /// <summary>
+        /// 串行执行单个网关的完整通信事务。
+        ///
+        /// GatewayService不知道具体协议；请求生成、发送、
+        /// 接收、校验和解析均在transaction委托内完成。
+        /// </summary>
+        public async Task<TResult> ExecuteTransactionAsync<TResult>(
+            string id,
+            string operationName,
+            Func<ICommunicationClient, CancellationToken, Task<TResult>> transaction,
+            TimeSpan? timeout = null,
+            CancellationToken cancellationToken = default)
+        {
+            ArgumentNullException.ThrowIfNull(transaction);
+
+            GatewayRuntime? runtime =
+                GetRuntime(id);
+
+            if (runtime == null)
+            {
+                string message =
+                    $"不存在运行网关:{id} 操作:{operationName}";
+
+                logService.Error(message);
+                throw new InvalidOperationException(message);
+            }
+
+
+            return await ExecuteWithGatewayLockAsync(
+                runtime,
+                operationName,
+                timeout ?? DefaultTransactionTimeout,
+                async token =>
+                {
+                    if (!runtime.IsOnline)
+                    {
+                        throw new InvalidOperationException(
+                            $"网关未连接:{id}"
+                        );
+                    }
+
+                    return await transaction(
+                        runtime.Client,
+                        token
+                    );
+                },
+                cancellationToken
             );
         }
 
 
-
-
-
-
-
-
-
         /// <summary>
-        /// 连接网关
+        /// 连接网关。重复连接在取得锁后会再次检查状态。
         /// </summary>
         public async Task ConnectAsync(
-            string id)
+            string id,
+            CancellationToken cancellationToken = default)
         {
-
-            GatewayRuntime runtime =
+            GatewayRuntime? runtime =
                 GetRuntime(id);
-
-
 
             if (runtime == null)
             {
-
                 logService.Warn(
                     $"不存在运行网关:{id}"
                 );
 
                 return;
-
             }
-
-
 
 
             try
             {
-
-                await runtime.Client
-                    .ConnectAsync();
-
-
-
-                UpdateOnlineState(
+                await ExecuteWithGatewayLockAsync(
                     runtime,
-                    true
+                    "连接",
+                    DefaultConnectionTimeout,
+                    async token =>
+                    {
+                        if (runtime.IsOnline)
+                        {
+                            logService.Warn(
+                                $"网关已连接，忽略重复连接:{id}"
+                            );
+
+                            return true;
+                        }
+
+
+                        await runtime.Client
+                            .ConnectAsync(token);
+
+                        UpdateOnlineState(
+                            runtime,
+                            true
+                        );
+
+                        logService.Info(
+                            $"网关连接成功:{id}"
+                        );
+
+                        return true;
+                    },
+                    cancellationToken
                 );
-
-
-
-                logService.Info(
-                    $"网关连接成功:{id}"
-                );
-
             }
-            catch (Exception ex)
+            catch
             {
-
                 UpdateOnlineState(
                     runtime,
                     false
                 );
-
-
-                logService.Error(
-                    $"网关连接失败:{id} {ex.Message}"
-                );
-
             }
-
         }
 
 
-
-
-
-
-
-
         /// <summary>
-        /// 断开网关
+        /// 断开网关。断开会等待当前通信事务完成。
         /// </summary>
         public async Task DisconnectAsync(
-            string id)
+            string id,
+            CancellationToken cancellationToken = default)
         {
-
-
-            GatewayRuntime runtime =
+            GatewayRuntime? runtime =
                 GetRuntime(id);
-
-
 
             if (runtime == null)
             {
@@ -303,76 +288,233 @@ namespace PlantMaster.Services
             }
 
 
+            try
+            {
+                await ExecuteWithGatewayLockAsync(
+                    runtime,
+                    "断开",
+                    DefaultLifecycleTimeout,
+                    async _ =>
+                    {
+                        if (!runtime.IsOnline)
+                        {
+                            return true;
+                        }
 
-            await runtime.Client
-                .DisconnectAsync();
 
+                        await runtime.Client
+                            .DisconnectAsync();
 
+                        UpdateOnlineState(
+                            runtime,
+                            false
+                        );
 
-            UpdateOnlineState(
-                runtime,
-                false
-            );
+                        logService.Info(
+                            $"网关断开:{id}"
+                        );
 
-
-
-            logService.Info(
-                $"网关断开:{id}"
-            );
-
+                        return true;
+                    },
+                    cancellationToken
+                );
+            }
+            catch
+            {
+                // 异常已在统一执行入口记录。
+            }
         }
-
-
-
-
-
-
 
 
         /// <summary>
-        /// 删除网关运行对象
-        ///
-        /// 删除前释放通信资源
+        /// 删除网关运行对象。
+        /// 先停止接受新事务，再等待当前事务完成。
         /// </summary>
         public async Task RemoveGateway(
-            string id)
+            string id,
+            CancellationToken cancellationToken = default)
         {
-
-            GatewayRuntime runtime =
+            GatewayRuntime? runtime =
                 GetRuntime(id);
 
-
-
-            if (runtime == null)
+            if (runtime == null
+                || !runtime.TryBeginStopping())
             {
                 return;
             }
 
 
-
-            await runtime.Client
-                .DisconnectAsync();
-
-
-
-            UpdateOnlineState(
-                runtime,
-                false
+            runtimes.TryRemove(
+                id,
+                out _
             );
 
 
+            try
+            {
+                await ExecuteWithGatewayLockAsync(
+                    runtime,
+                    "删除",
+                    DefaultLifecycleTimeout,
+                    async _ =>
+                    {
+                        await runtime.Client
+                            .DisconnectAsync();
 
-            runtimes.Remove(id);
+                        UpdateOnlineState(
+                            runtime,
+                            false
+                        );
 
+                        logService.Info(
+                            $"释放网关资源:{id}"
+                        );
 
-
-            logService.Info(
-                $"释放网关资源:{id}"
-            );
-
+                        return true;
+                    },
+                    cancellationToken,
+                    allowWhenStopping: true,
+                    observeServiceLifetime: false
+                );
+            }
+            catch
+            {
+                // 异常已在统一执行入口记录。
+            }
         }
 
 
-    }
+        /// <summary>
+        /// 程序关闭时并行停止所有网关。
+        /// 每个网关仍使用自己的通信锁。
+        /// </summary>
+        public async Task ShutdownAsync(
+            CancellationToken cancellationToken = default)
+        {
+            serviceLifetimeSource.Cancel();
 
+            string[] gatewayIds =
+                runtimes.Keys.ToArray();
+
+            Task[] shutdownTasks =
+                gatewayIds
+                    .Select(id => RemoveGateway(
+                        id,
+                        cancellationToken
+                    ))
+                    .ToArray();
+
+            await Task.WhenAll(shutdownTasks);
+        }
+
+
+        /// <summary>
+        /// 网关级统一异步锁入口。
+        /// 超时覆盖等待锁和执行事务的总时间。
+        /// </summary>
+        private async Task<TResult> ExecuteWithGatewayLockAsync<TResult>(
+            GatewayRuntime runtime,
+            string operationName,
+            TimeSpan timeout,
+            Func<CancellationToken, Task<TResult>> operation,
+            CancellationToken cancellationToken,
+            bool allowWhenStopping = false,
+            bool observeServiceLifetime = true)
+        {
+            if (timeout <= TimeSpan.Zero)
+            {
+                throw new ArgumentOutOfRangeException(
+                    nameof(timeout),
+                    "通信超时时间必须大于0"
+                );
+            }
+
+
+            using CancellationTokenSource timeoutSource =
+                observeServiceLifetime
+                    ? CancellationTokenSource.CreateLinkedTokenSource(
+                        cancellationToken,
+                        serviceLifetimeSource.Token
+                    )
+                    : CancellationTokenSource.CreateLinkedTokenSource(
+                        cancellationToken
+                    );
+
+            timeoutSource.CancelAfter(timeout);
+
+            bool lockTaken = false;
+
+
+            try
+            {
+                await runtime.CommunicationSemaphore
+                    .WaitAsync(timeoutSource.Token);
+
+                lockTaken = true;
+
+
+                if (runtime.IsStopping
+                    && !allowWhenStopping)
+                {
+                    throw new InvalidOperationException(
+                        $"网关正在停止:{runtime.Setting.Id}"
+                    );
+                }
+
+
+                return await operation(
+                    timeoutSource.Token
+                );
+            }
+            catch (OperationCanceledException)
+                when (cancellationToken.IsCancellationRequested)
+            {
+                logService.Warn(
+                    $"网关通信已取消:{runtime.Setting.Id} 操作:{operationName}"
+                );
+
+                throw;
+            }
+            catch (OperationCanceledException)
+                when (observeServiceLifetime
+                    && serviceLifetimeSource.IsCancellationRequested)
+            {
+                logService.Warn(
+                    $"网关通信因程序关闭而取消:{runtime.Setting.Id} "
+                    + $"操作:{operationName}"
+                );
+
+                throw;
+            }
+            catch (OperationCanceledException ex)
+            {
+                string message =
+                    $"网关通信超时:{runtime.Setting.Id} "
+                    + $"操作:{operationName} 超时:{timeout.TotalSeconds:0.###}秒";
+
+                logService.Error(message);
+
+                throw new TimeoutException(
+                    message,
+                    ex
+                );
+            }
+            catch (Exception ex)
+            {
+                logService.Error(
+                    $"网关通信异常:{runtime.Setting.Id} "
+                    + $"操作:{operationName} {ex.Message}"
+                );
+
+                throw;
+            }
+            finally
+            {
+                if (lockTaken)
+                {
+                    runtime.CommunicationSemaphore.Release();
+                }
+            }
+        }
+    }
 }

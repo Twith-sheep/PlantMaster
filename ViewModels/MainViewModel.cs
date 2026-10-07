@@ -6,6 +6,7 @@ using System;
 using System.Collections.ObjectModel;
 using System.Linq;
 using System.Threading;
+using System.Threading.Tasks;
 using System.Windows.Input;
 
 
@@ -348,28 +349,31 @@ namespace PlantMaster.ViewModels
         /// </summary>
         private async void ConnectGateway()
         {
+            GatewayViewModel[] selectedGateways =
+                Gateways
+                    .Where(gateway => gateway.IsSelected)
+                    .ToArray();
+
 
             foreach (GatewayViewModel gatewayVM
-                in Gateways)
+                in selectedGateways)
             {
-
-                if (!gatewayVM.IsSelected)
-                {
-                    continue;
-                }
-
-                //这里没管道啊
-                // 创建运行对象和通信管道
                 gatewayService.AddGateway(
                     gatewayVM.Setting
                 );
-
-
-                await gatewayService.ConnectAsync(
-                    gatewayVM.Setting.Id
-                );
-
             }
+
+
+            Task[] connectTasks =
+                selectedGateways
+                    .Select(gateway =>
+                        gatewayService.ConnectAsync(
+                            gateway.Setting.Id
+                        ))
+                    .ToArray();
+
+
+            await Task.WhenAll(connectTasks);
 
         }
 
@@ -382,25 +386,19 @@ namespace PlantMaster.ViewModels
         /// <summary>
         /// 断开选中的网关
         /// </summary>
-        private void DisconnectGateway()
+        private async void DisconnectGateway()
         {
-
-            foreach (GatewayViewModel gatewayVM
-                in Gateways)
-            {
-
-                if (!gatewayVM.IsSelected)
-                {
-                    continue;
-                }
-
+            Task[] disconnectTasks =
+                Gateways
+                    .Where(gateway => gateway.IsSelected)
+                    .Select(gateway =>
+                        gatewayService.DisconnectAsync(
+                            gateway.Setting.Id
+                        ))
+                    .ToArray();
 
 
-                gatewayService.DisconnectAsync(
-                    gatewayVM.Setting.Id
-                );
-
-            }
+            await Task.WhenAll(disconnectTasks);
 
         }
 
