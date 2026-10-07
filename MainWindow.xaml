@@ -1,0 +1,531 @@
+﻿<Window x:Class="PlantMaster.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:local="clr-namespace:PlantMaster"
+        mc:Ignorable="d"
+
+        Title="PlantMaster"
+        Height="600"
+        Width="900">
+
+
+    <Grid Margin="15">
+
+
+        <Grid.RowDefinitions>
+
+            <RowDefinition Height="300"/>
+
+            <RowDefinition Height="*"/>
+
+        </Grid.RowDefinitions>
+
+
+
+
+
+        <GroupBox Header="🌐 网关管理"
+                  FontSize="14">
+
+
+            <Grid>
+
+
+                <Grid.RowDefinitions>
+
+                    <RowDefinition Height="*"/>
+
+                    <RowDefinition Height="50"/>
+
+                </Grid.RowDefinitions>
+
+
+
+
+
+                <DataGrid
+
+                    ItemsSource="{Binding Gateways}"
+
+                    AutoGenerateColumns="False"
+
+                    CanUserAddRows="False"
+
+                    RowHeight="35"
+
+                    FontSize="14"
+
+                    HeadersVisibility="Column"
+
+                    GridLinesVisibility="Horizontal"
+
+                    SelectionMode="Single">
+
+
+
+
+
+                    <!-- 在线状态 -->
+
+                    <DataGrid.RowStyle>
+
+                        <Style TargetType="DataGridRow">
+
+
+                            <Setter Property="Background"
+                                    Value="White"/>
+
+
+                            <Style.Triggers>
+
+
+                                <DataTrigger
+                                    Binding="{Binding Runtime.IsOnline}"
+                                    Value="True">
+
+
+                                    <Setter Property="Background"
+                                            Value="LightGreen"/>
+
+
+                                </DataTrigger>
+
+
+                            </Style.Triggers>
+
+
+                        </Style>
+
+
+                    </DataGrid.RowStyle>
+
+
+
+
+
+
+
+                    <DataGrid.CellStyle>
+
+                        <Style TargetType="DataGridCell">
+
+
+                            <Setter Property="Background"
+                                    Value="Transparent"/>
+
+
+                            <Setter Property="VerticalContentAlignment"
+                                    Value="Center"/>
+
+
+                        </Style>
+
+
+                    </DataGrid.CellStyle>
+
+
+
+
+
+
+
+                    <DataGrid.ColumnHeaderStyle>
+
+                        <Style TargetType="DataGridColumnHeader">
+
+
+                            <Setter Property="Height"
+                                    Value="35"/>
+
+
+                            <Setter Property="FontWeight"
+                                    Value="Bold"/>
+
+
+                            <Setter Property="HorizontalContentAlignment"
+                                    Value="Center"/>
+
+
+                        </Style>
+
+
+                    </DataGrid.ColumnHeaderStyle>
+
+
+
+
+
+
+
+
+
+                    <DataGrid.Columns>
+
+
+
+
+
+                        <DataGridTemplateColumn Header="选择"
+                                                Width="60">
+
+
+                            <DataGridTemplateColumn.CellTemplate>
+
+                                <DataTemplate>
+
+
+                                    <CheckBox
+
+                                        HorizontalAlignment="Center"
+
+                                        IsChecked="{Binding IsSelected,
+                                        UpdateSourceTrigger=PropertyChanged}"/>
+
+
+                                </DataTemplate>
+
+
+                            </DataGridTemplateColumn.CellTemplate>
+
+
+                        </DataGridTemplateColumn>
+
+
+
+
+
+
+                        <!-- Id -->
+
+                        <DataGridTextColumn
+
+                            Header="Id"
+
+                            Width="120"
+
+                            Binding="{Binding Setting.Id}"/>
+
+
+
+
+
+
+                        <!-- 名称 -->
+
+                        <DataGridTextColumn
+
+                            Header="名称"
+
+                            Width="120"
+
+                            Binding="{Binding Setting.Name}"/>
+
+
+
+
+
+
+
+                        <!-- IP -->
+
+                        <DataGridTextColumn
+
+                            Header="IP地址"
+
+                            Width="160"
+
+                            Binding="{Binding Setting.IpAddress}"/>
+
+
+
+
+
+
+
+                        <!-- 端口 -->
+
+                        <DataGridTextColumn
+
+                            Header="端口"
+
+                            Width="80"
+
+                            Binding="{Binding Setting.Port}"/>
+
+
+
+
+
+
+
+
+                        <!-- 状态 -->
+
+                        <DataGridTemplateColumn
+
+                            Header="状态"
+
+                            Width="100">
+
+
+                            <DataGridTemplateColumn.CellTemplate>
+
+
+                                <DataTemplate>
+
+
+                                    <TextBlock
+
+                                        HorizontalAlignment="Center">
+
+
+                                        <TextBlock.Text>
+
+
+                                            <Binding Path="Runtime.IsOnline"/>
+
+
+                                        </TextBlock.Text>
+
+
+                                    </TextBlock>
+
+
+                                </DataTemplate>
+
+
+                            </DataGridTemplateColumn.CellTemplate>
+
+
+                        </DataGridTemplateColumn>
+
+
+
+
+
+
+
+
+
+                        <!-- 删除 -->
+
+                        <DataGridTemplateColumn
+
+                            Header="操作"
+
+                            Width="80">
+
+
+                            <DataGridTemplateColumn.CellTemplate>
+
+
+                                <DataTemplate>
+
+
+                                    <Button
+
+                                        Content="删除"
+
+                                        Width="55"
+
+                                        Height="25"
+
+                                        Command="{Binding DataContext.DeleteGatewayCommand,
+                                        RelativeSource={RelativeSource AncestorType=DataGrid}}"
+
+
+                                        CommandParameter="{Binding}"/>
+
+
+                                </DataTemplate>
+
+
+                            </DataGridTemplateColumn.CellTemplate>
+
+
+                        </DataGridTemplateColumn>
+
+
+
+                    </DataGrid.Columns>
+
+
+
+
+                </DataGrid>
+
+
+
+
+
+
+
+
+
+                <StackPanel
+
+                    Grid.Row="1"
+
+                    Orientation="Horizontal"
+
+                    VerticalAlignment="Center">
+
+
+
+
+
+
+                    <Button
+
+                        Content="导入配置"
+
+                        Width="100"
+
+                        Height="30"
+
+                        Margin="5"
+
+                        Command="{Binding ImportGatewayCommand}"/>
+
+
+
+
+
+
+
+
+                    <Button
+
+                        Content="连接"
+
+                        Width="80"
+
+                        Height="30"
+
+                        Margin="5"
+
+                        Command="{Binding ConnectGatewayCommand}"/>
+
+
+
+
+
+
+
+
+                    <Button
+
+                        Content="断开"
+
+                        Width="80"
+
+                        Height="30"
+
+                        Margin="5"
+
+                        Command="{Binding DisconnectGatewayCommand}"/>
+
+
+
+
+
+
+
+
+                    <Button
+
+                        Content="删除选中"
+
+                        Width="100"
+
+                        Height="30"
+
+                        Margin="5"
+
+                        Command="{Binding DeleteSelectedGatewayCommand}"/>
+
+
+
+                </StackPanel>
+
+
+            </Grid>
+
+
+        </GroupBox>
+
+
+
+
+
+
+
+
+
+        <GroupBox Grid.Row="1"
+
+                  Header="📋 系统日志"
+
+                  FontSize="14">
+
+
+            <ListBox
+
+                ItemsSource="{Binding Logs}"
+
+                FontSize="14">
+
+
+                <ListBox.ItemTemplate>
+
+
+                    <DataTemplate>
+
+
+                        <TextBlock Margin="5">
+
+
+                            <TextBlock.Text>
+
+
+                                <MultiBinding
+
+                                    StringFormat="{}{0:HH:mm:ss} [{1}] {2}">
+
+
+                                    <Binding Path="Time"/>
+
+                                    <Binding Path="Level"/>
+
+                                    <Binding Path="Message"/>
+
+
+                                </MultiBinding>
+
+
+                            </TextBlock.Text>
+
+
+                        </TextBlock>
+
+
+                    </DataTemplate>
+
+
+                </ListBox.ItemTemplate>
+
+
+            </ListBox>
+
+
+        </GroupBox>
+
+
+
+    </Grid>
+
+
+
+</Window>
