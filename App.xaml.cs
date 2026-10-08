@@ -3,6 +3,7 @@ using PlantMaster.Infrastructure.Config.Interfaces;
 using PlantMaster.Infrastructure.Config.Readers;
 using PlantMaster.Services;
 using System;
+using System.Diagnostics;
 using System.Threading;
 using System.Windows;
 
@@ -210,6 +211,28 @@ namespace PlantMaster
             {
                 LogService.Error(
                     $"程序关闭网关失败:{ex.Message}"
+                );
+            }
+
+
+            try
+            {
+                using CancellationTokenSource logShutdownSource =
+                    new CancellationTokenSource(
+                        TimeSpan.FromSeconds(15)
+                    );
+
+                LogSaveService
+                    .StopAsync(logShutdownSource.Token)
+                    .GetAwaiter()
+                    .GetResult();
+            }
+            catch (Exception ex)
+            {
+                // 最终刷盘失败时仍保留内存批次，
+                // 同时输出诊断信息，避免递归调用文件日志。
+                Debug.WriteLine(
+                    $"程序关闭日志最终刷盘失败:{ex}"
                 );
             }
 

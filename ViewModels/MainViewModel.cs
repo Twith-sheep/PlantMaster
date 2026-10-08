@@ -23,6 +23,9 @@ namespace PlantMaster.ViewModels
     {
 
 
+        private const int MaximumDisplayedLogCount = 5000;
+
+
         //日志服务
         private readonly LogService logService;
 
@@ -40,7 +43,7 @@ namespace PlantMaster.ViewModels
 
 
         // 创建ViewModel时的UI同步上下文
-        private readonly SynchronizationContext? uiSynchronizationContext;
+        private readonly SynchronizationContext uiSynchronizationContext;
 
 
 
@@ -50,10 +53,7 @@ namespace PlantMaster.ViewModels
         /// </summary>
         public ObservableCollection<LogItem> Logs
         {
-            get
-            {
-                return logService.Logs;
-            }
+            get;
         }
 
 
@@ -131,7 +131,18 @@ namespace PlantMaster.ViewModels
 
 
             uiSynchronizationContext =
-                SynchronizationContext.Current;
+                SynchronizationContext.Current
+                ?? throw new InvalidOperationException(
+                    "MainViewModel必须在UI线程创建"
+                );
+
+
+            Logs =
+                new ObservableCollection<LogItem>();
+
+
+            logService.LogAdded +=
+                LogService_LogAdded;
 
 
 
@@ -183,6 +194,40 @@ namespace PlantMaster.ViewModels
                 "主界面初始化完成"
             );
 
+        }
+
+
+
+        /// <summary>
+        /// 将任意业务线程产生的日志切换到UI线程显示。
+        /// </summary>
+        private void LogService_LogAdded(LogItem log)
+        {
+            if (SynchronizationContext.Current
+                == uiSynchronizationContext)
+            {
+                AddLogToView(log);
+                return;
+            }
+
+
+            uiSynchronizationContext.Post(
+                _ => AddLogToView(log),
+                null
+            );
+        }
+
+
+        private void AddLogToView(LogItem log)
+        {
+            Logs.Add(log);
+
+
+            while (Logs.Count
+                > MaximumDisplayedLogCount)
+            {
+                Logs.RemoveAt(0);
+            }
         }
 
 
@@ -321,8 +366,7 @@ namespace PlantMaster.ViewModels
             }
 
 
-            if (uiSynchronizationContext == null
-                || SynchronizationContext.Current == uiSynchronizationContext)
+            if (SynchronizationContext.Current == uiSynchronizationContext)
             {
                 UpdateViewModel();
                 return;
