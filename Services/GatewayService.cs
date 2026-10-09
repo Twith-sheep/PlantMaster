@@ -2,6 +2,7 @@ using PlantMaster.Communication;
 using PlantMaster.Models;
 using System;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.Linq;
 using System.Net.Sockets;
 using System.Threading;
@@ -198,10 +199,28 @@ namespace PlantMaster.Services
                         );
                     }
 
-                    return await transaction(
-                        runtime.Client,
-                        token
-                    );
+
+                    try
+                    {
+                        return await transaction(
+                            runtime.Client,
+                            token
+                        );
+                    }
+                    catch
+                    {
+                        // 事务已经开始后，不论失败、超时还是取消，
+                        // 当前字节流都可能残留迟到响应或半包。
+                        // 必须在释放网关锁之前废弃连接。
+                        await InvalidateConnectionAsync(
+                            runtime,
+                            operationName
+                        );
+
+                        // 清理异常已由InvalidateConnectionAsync记录，
+                        // 此处保留并重新抛出最初的通信异常。
+                        throw;
+                    }
                 },
                 cancellationToken
             );
@@ -220,11 +239,11 @@ namespace PlantMaster.Services
 
             if (runtime == null)
             {
-                logService.Warn(
-                    $"不存在运行网关:{id}"
-                );
+                string message =
+                    $"不存在运行网关:{id}";
 
-                return;
+                logService.Error(message);
+                throw new InvalidOperationException(message);
             }
 
 
@@ -335,19 +354,18 @@ namespace PlantMaster.Services
                     DefaultLifecycleTimeout,
                     async _ =>
                     {
-                        if (!runtime.IsOnline)
+                        try
                         {
-                            return true;
+                            await runtime.Client
+                                .DisconnectAsync();
                         }
-
-
-                        await runtime.Client
-                            .DisconnectAsync();
-
-                        UpdateOnlineState(
-                            runtime,
-                            false
-                        );
+                        finally
+                        {
+                            UpdateOnlineState(
+                                runtime,
+                                false
+                            );
+                        }
 
                         logService.Info(
                             $"网关断开:{id}"
@@ -390,17 +408,15 @@ namespace PlantMaster.Services
             GatewayRuntime? runtime =
                 GetRuntime(id);
 
-            if (runtime == null
-                || !runtime.TryBeginStopping())
+            if (runtime == null)
             {
                 return;
             }
 
 
-            runtimes.TryRemove(
-                id,
-                out _
-            );
+            // 首次调用负责标记停止；并发或重试删除仍使用同一Runtime，
+            // 在清理成功前不从字典移除，避免创建第二个同ID Runtime。
+            runtime.TryBeginStopping();
 
 
             try
@@ -411,13 +427,18 @@ namespace PlantMaster.Services
                     DefaultLifecycleTimeout,
                     async _ =>
                     {
-                        await runtime.Client
-                            .DisconnectAsync();
-
-                        UpdateOnlineState(
-                            runtime,
-                            false
-                        );
+                        try
+                        {
+                            await runtime.Client
+                                .DisconnectAsync();
+                        }
+                        finally
+                        {
+                            UpdateOnlineState(
+                                runtime,
+                                false
+                            );
+                        }
 
                         logService.Info(
                             $"释放网关资源:{id}"
@@ -429,6 +450,16 @@ namespace PlantMaster.Services
                     allowWhenStopping: true,
                     observeServiceLifetime: false
                 );
+
+
+                // 只有清理成功后才原子移除这个确切的Runtime实例。
+                // 即使同ID后来被重新添加，也不会误删新实例。
+                RemoveRuntimeIfSame(
+                    id,
+                    runtime
+                );
+
+                runtime.Client.Dispose();
             }
             catch (OperationCanceledException)
             {
@@ -472,6 +503,58 @@ namespace PlantMaster.Services
                     .ToArray();
 
             await Task.WhenAll(shutdownTasks);
+        }
+
+
+        /// <summary>
+        /// 事务已经开始但未完成时，在仍持有网关锁期间废弃连接。
+        /// 清理失败只记录，不覆盖最初的事务异常。
+        /// </summary>
+        private async Task InvalidateConnectionAsync(
+            GatewayRuntime runtime,
+            string operationName)
+        {
+            try
+            {
+                await runtime.Client
+                    .DisconnectAsync();
+            }
+            catch (Exception cleanupException)
+            {
+                logService.Error(
+                    $"通信失败后清理连接异常:{runtime.Setting.Id} "
+                    + $"操作:{operationName} {cleanupException.Message}"
+                );
+            }
+            finally
+            {
+                UpdateOnlineState(
+                    runtime,
+                    false
+                );
+            }
+
+
+            logService.Warn(
+                $"通信事务未正常完成，连接已失效:{runtime.Setting.Id} "
+                + $"操作:{operationName}"
+            );
+        }
+
+
+        private void RemoveRuntimeIfSame(
+            string id,
+            GatewayRuntime runtime)
+        {
+            ICollection<KeyValuePair<string, GatewayRuntime>> runtimeCollection =
+                runtimes;
+
+            runtimeCollection.Remove(
+                new KeyValuePair<string, GatewayRuntime>(
+                    id,
+                    runtime
+                )
+            );
         }
 
 
