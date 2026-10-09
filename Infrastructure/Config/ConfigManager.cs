@@ -425,8 +425,6 @@ namespace PlantMaster.Infrastructure.Config
                         filePath
                     );
 
-                //github测试
-
                 if (config == null)
                 {
 
