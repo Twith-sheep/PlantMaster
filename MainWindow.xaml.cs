@@ -1,6 +1,7 @@
 ﻿using PlantMaster.ViewModels;
 using System.ComponentModel;
 using System.Windows;
+using System.Windows.Input;
 
 namespace PlantMaster
 {
@@ -23,6 +24,10 @@ namespace PlantMaster
         private bool isClosing;
 
         private bool allowClose;
+
+        private bool isLogCollapsed;
+
+        private GridLength expandedLogHeight = new(220);
 
 
         public MainWindow()
@@ -60,6 +65,101 @@ namespace PlantMaster
 
 
             Closing += MainWindow_Closing;
+            StateChanged += MainWindow_StateChanged;
+        }
+
+
+        private void TitleBar_MouseLeftButtonDown(
+            object sender,
+            MouseButtonEventArgs e)
+        {
+            if (e.ClickCount == 2)
+            {
+                ToggleMaximizedState();
+                return;
+            }
+
+            if (e.LeftButton == MouseButtonState.Pressed)
+            {
+                DragMove();
+            }
+        }
+
+
+        private void MinimizeButton_Click(
+            object sender,
+            RoutedEventArgs e)
+        {
+            WindowState = WindowState.Minimized;
+        }
+
+
+        private void MaximizeButton_Click(
+            object sender,
+            RoutedEventArgs e)
+        {
+            ToggleMaximizedState();
+        }
+
+
+        private void CloseButton_Click(
+            object sender,
+            RoutedEventArgs e)
+        {
+            Close();
+        }
+
+
+        private void MainWindow_StateChanged(
+            object? sender,
+            EventArgs e)
+        {
+            MaximizeButton.Content =
+                WindowState == WindowState.Maximized
+                    ? "❐"
+                    : "□";
+        }
+
+
+        private void ToggleMaximizedState()
+        {
+            WindowState =
+                WindowState == WindowState.Maximized
+                    ? WindowState.Normal
+                    : WindowState.Maximized;
+        }
+
+
+        private void CollapseLogButton_Click(
+            object sender,
+            RoutedEventArgs e)
+        {
+            if (!isLogCollapsed)
+            {
+                if (LogRow.ActualHeight > 0)
+                {
+                    expandedLogHeight =
+                        new GridLength(LogRow.ActualHeight);
+                }
+
+                LogPanel.Visibility = Visibility.Collapsed;
+                LogSplitter.Visibility = Visibility.Collapsed;
+                LogRow.MinHeight = 0;
+                LogRow.Height = new GridLength(0);
+                CollapseLogButton.Content = "⌄";
+                CollapseLogButton.ToolTip = "展开运行日志";
+            }
+            else
+            {
+                LogPanel.Visibility = Visibility.Visible;
+                LogSplitter.Visibility = Visibility.Visible;
+                LogRow.MinHeight = 120;
+                LogRow.Height = expandedLogHeight;
+                CollapseLogButton.Content = "⌃";
+                CollapseLogButton.ToolTip = "折叠运行日志";
+            }
+
+            isLogCollapsed = !isLogCollapsed;
         }
 
 

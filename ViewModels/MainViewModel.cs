@@ -4,10 +4,13 @@ using PlantMaster.Models;
 using PlantMaster.Services;
 using System;
 using System.Collections.ObjectModel;
+using System.ComponentModel;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using System.Windows.Data;
 using System.Windows.Input;
+using System.Windows.Threading;
 
 
 namespace PlantMaster.ViewModels
@@ -19,7 +22,7 @@ namespace PlantMaster.ViewModels
     /// 负责界面数据和命令
     /// 不负责配置解析和通信
     /// </summary>
-    public class MainViewModel
+    public class MainViewModel : ObservableObject
     {
 
 
@@ -44,6 +47,14 @@ namespace PlantMaster.ViewModels
 
         // 创建ViewModel时的UI同步上下文
         private readonly SynchronizationContext uiSynchronizationContext;
+
+        private readonly DispatcherTimer currentTimeTimer;
+
+        private GatewayViewModel? selectedGateway;
+
+        private string gatewaySearchText = string.Empty;
+
+        private DateTime currentTime = DateTime.Now;
 
 
 
@@ -70,6 +81,102 @@ namespace PlantMaster.ViewModels
         {
             get;
         }
+
+
+        public ICollectionView GatewaysView
+        {
+            get;
+        }
+
+
+        public GatewayViewModel? SelectedGateway
+        {
+            get
+            {
+                return selectedGateway;
+            }
+
+            set
+            {
+                if (ReferenceEquals(
+                    selectedGateway,
+                    value
+                ))
+                {
+                    return;
+                }
+
+
+                selectedGateway = value;
+
+                foreach (GatewayViewModel gateway
+                    in Gateways)
+                {
+                    gateway.IsSelected =
+                        ReferenceEquals(
+                            gateway,
+                            selectedGateway
+                        );
+                }
+
+
+                OnPropertyChanged(
+                    nameof(SelectedGateway)
+                );
+            }
+        }
+
+
+        public string GatewaySearchText
+        {
+            get
+            {
+                return gatewaySearchText;
+            }
+
+            set
+            {
+                if (gatewaySearchText == value)
+                {
+                    return;
+                }
+
+
+                gatewaySearchText =
+                    value ?? string.Empty;
+
+                OnPropertyChanged(
+                    nameof(GatewaySearchText)
+                );
+
+                GatewaysView.Refresh();
+            }
+        }
+
+
+        public int GatewayCount =>
+            Gateways.Count;
+
+
+        public int OnlineGatewayCount =>
+            Gateways.Count(gateway => gateway.IsOnline);
+
+
+        public int OfflineGatewayCount =>
+            GatewayCount - OnlineGatewayCount;
+
+
+        public string CurrentTime =>
+            currentTime.ToString("yyyy-MM-dd HH:mm:ss");
+
+
+        public string ApplicationVersion =>
+            typeof(MainViewModel)
+                .Assembly
+                .GetName()
+                .Version?
+                .ToString(3)
+            ?? "未设置";
 
 
 
@@ -149,6 +256,18 @@ namespace PlantMaster.ViewModels
             Gateways =
                 new ObservableCollection<GatewayViewModel>();
 
+            Gateways.CollectionChanged +=
+                (_, _) => UpdateGatewaySummary();
+
+
+            GatewaysView =
+                CollectionViewSource.GetDefaultView(
+                    Gateways
+                );
+
+            GatewaysView.Filter =
+                FilterGateway;
+
 
             gatewayService.ConnectionStateChanged +=
                 GatewayService_ConnectionStateChanged;
@@ -205,11 +324,84 @@ namespace PlantMaster.ViewModels
             LoadGateways();
 
 
+            currentTimeTimer =
+                new DispatcherTimer()
+                {
+                    Interval = TimeSpan.FromSeconds(1)
+                };
+
+            currentTimeTimer.Tick +=
+                (_, _) =>
+                {
+                    currentTime = DateTime.Now;
+
+                    OnPropertyChanged(
+                        nameof(CurrentTime)
+                    );
+                };
+
+            currentTimeTimer.Start();
+
+
 
             logService.Info(
                 "主界面初始化完成"
             );
 
+        }
+
+
+        private bool FilterGateway(object item)
+        {
+            if (item is not GatewayViewModel gateway)
+            {
+                return false;
+            }
+
+
+            if (string.IsNullOrWhiteSpace(
+                GatewaySearchText
+            ))
+            {
+                return true;
+            }
+
+
+            string keyword =
+                GatewaySearchText.Trim();
+
+            return gateway.Setting.Name.Contains(
+                    keyword,
+                    StringComparison.OrdinalIgnoreCase
+                )
+                || gateway.Setting.Id.Contains(
+                    keyword,
+                    StringComparison.OrdinalIgnoreCase
+                )
+                || gateway.Setting.IpAddress.Contains(
+                    keyword,
+                    StringComparison.OrdinalIgnoreCase
+                )
+                || gateway.Setting.Port.ToString().Contains(
+                    keyword,
+                    StringComparison.OrdinalIgnoreCase
+                );
+        }
+
+
+        private void UpdateGatewaySummary()
+        {
+            OnPropertyChanged(
+                nameof(GatewayCount)
+            );
+
+            OnPropertyChanged(
+                nameof(OnlineGatewayCount)
+            );
+
+            OnPropertyChanged(
+                nameof(OfflineGatewayCount)
+            );
         }
 
 
@@ -276,6 +468,10 @@ namespace PlantMaster.ViewModels
             }
 
 
+            SelectedGateway =
+                Gateways.FirstOrDefault();
+
+
 
             logService.Info(
                 $"加载网关完成:{Gateways.Count}"
@@ -335,6 +531,9 @@ namespace PlantMaster.ViewModels
         private void RefreshGateways()
         {
 
+            string? selectedGatewayId =
+                SelectedGateway?.Setting.Id;
+
             Gateways.Clear();
 
 
@@ -351,6 +550,16 @@ namespace PlantMaster.ViewModels
                 );
 
             }
+
+
+            SelectedGateway =
+                Gateways.FirstOrDefault(
+                    gateway => gateway.Setting.Id
+                        == selectedGatewayId
+                )
+                ?? Gateways.FirstOrDefault();
+
+            GatewaysView.Refresh();
 
 
 
@@ -379,6 +588,8 @@ namespace PlantMaster.ViewModels
                 gatewayViewModel?.UpdateOnlineState(
                     e.IsOnline
                 );
+
+                UpdateGatewaySummary();
             }
 
 
@@ -516,6 +727,16 @@ namespace PlantMaster.ViewModels
             );
 
 
+            if (ReferenceEquals(
+                SelectedGateway,
+                gatewayVM
+            ))
+            {
+                SelectedGateway =
+                    Gateways.FirstOrDefault();
+            }
+
+
 
             logService.Info(
                 $"删除网关:{id}"
@@ -627,6 +848,14 @@ namespace PlantMaster.ViewModels
 
                 }
 
+            }
+
+
+            if (SelectedGateway == null
+                || !Gateways.Contains(SelectedGateway))
+            {
+                SelectedGateway =
+                    Gateways.FirstOrDefault();
             }
 
 
