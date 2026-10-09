@@ -5,6 +5,7 @@ using PlantMaster.Services;
 using System;
 using System.Diagnostics;
 using System.Threading;
+using System.Threading.Tasks;
 using System.Windows;
 
 namespace PlantMaster
@@ -22,6 +23,11 @@ namespace PlantMaster
     /// </summary>
     public partial class App : Application
     {
+        private readonly object shutdownSyncRoot = new object();
+
+        private Task? shutdownTask;
+
+        private int isShutdownCompleted;
 
 
         /// <summary>
@@ -189,50 +195,121 @@ namespace PlantMaster
 
 
 
+        public bool IsShutdownCompleted
+        {
+            get
+            {
+                return Volatile.Read(
+                    ref isShutdownCompleted
+                ) == 1;
+            }
+        }
+
+
         /// <summary>
-        /// 程序退出前停止所有网关，
-        /// 避免正在通信时直接释放TCP连接。
+        /// 只执行一次的异步关闭协调入口。
+        /// 多个关闭入口同时调用时共享同一个关闭任务。
         /// </summary>
-        protected override void OnExit(ExitEventArgs e)
+        public Task ShutdownApplicationAsync()
+        {
+            lock (shutdownSyncRoot)
+            {
+                shutdownTask ??=
+                    ShutdownApplicationCoreAsync();
+
+                return shutdownTask;
+            }
+        }
+
+
+        private async Task ShutdownApplicationCoreAsync()
         {
             try
             {
-                using CancellationTokenSource shutdownSource =
+                using CancellationTokenSource gatewayShutdownSource =
                     new CancellationTokenSource(
                         TimeSpan.FromSeconds(15)
                     );
 
-                GatewayService
-                    .ShutdownAsync(shutdownSource.Token)
-                    .GetAwaiter()
-                    .GetResult();
-            }
-            catch (Exception ex)
-            {
-                LogService.Error(
-                    $"程序关闭网关失败:{ex.Message}"
-                );
-            }
-
-
-            try
-            {
-                using CancellationTokenSource logShutdownSource =
-                    new CancellationTokenSource(
-                        TimeSpan.FromSeconds(15)
+                try
+                {
+                    await GatewayService.ShutdownAsync(
+                        gatewayShutdownSource.Token
                     );
-
-                LogSaveService
-                    .StopAsync(logShutdownSource.Token)
-                    .GetAwaiter()
-                    .GetResult();
+                }
+                catch (OperationCanceledException ex)
+                {
+                    LogService.Warn(
+                        $"程序关闭网关已取消:{ex.Message}"
+                    );
+                }
+                catch (Exception ex)
+                {
+                    LogService.Error(
+                        $"程序关闭网关失败:{ex.Message}"
+                    );
+                }
             }
-            catch (Exception ex)
+            finally
             {
-                // 最终刷盘失败时仍保留内存批次，
-                // 同时输出诊断信息，避免递归调用文件日志。
+                try
+                {
+                    using CancellationTokenSource logShutdownSource =
+                        new CancellationTokenSource(
+                            TimeSpan.FromSeconds(15)
+                        );
+
+                    await LogSaveService.StopAsync(
+                        logShutdownSource.Token
+                    );
+                }
+                catch (Exception ex)
+                {
+                    // 日志服务正在停止，不能递归写入文件日志。
+                    Debug.WriteLine(
+                        $"程序关闭日志最终刷盘失败:{ex}"
+                    );
+                }
+                finally
+                {
+                    Volatile.Write(
+                        ref isShutdownCompleted,
+                        1
+                    );
+                }
+            }
+        }
+
+
+        /// <summary>
+        /// Windows注销或关机时只进行有界的异步清理尝试。
+        /// 操作系统仍可能强制结束进程，因此不能依赖本入口保证刷盘。
+        /// </summary>
+        protected override async void OnSessionEnding(
+            SessionEndingCancelEventArgs e)
+        {
+            if (IsShutdownCompleted)
+            {
+                base.OnSessionEnding(e);
+                return;
+            }
+
+
+            e.Cancel = true;
+
+            await ShutdownApplicationAsync();
+
+            base.OnSessionEnding(e);
+            Shutdown();
+        }
+
+
+        protected override void OnExit(ExitEventArgs e)
+        {
+            if (!IsShutdownCompleted)
+            {
                 Debug.WriteLine(
-                    $"程序关闭日志最终刷盘失败:{ex}"
+                    "应用退出时异步关闭流程尚未完成，无法在OnExit中安全阻塞等待。"
                 );
             }
 

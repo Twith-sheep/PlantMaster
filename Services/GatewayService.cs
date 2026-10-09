@@ -3,6 +3,7 @@ using PlantMaster.Models;
 using System;
 using System.Collections.Concurrent;
 using System.Linq;
+using System.Net.Sockets;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -262,11 +263,49 @@ namespace PlantMaster.Services
                     cancellationToken
                 );
             }
-            catch
+            catch (OperationCanceledException)
             {
                 UpdateOnlineState(
                     runtime,
                     false
+                );
+
+                throw;
+            }
+            catch (TimeoutException ex)
+            {
+                UpdateOnlineState(
+                    runtime,
+                    false
+                );
+
+                throw new InvalidOperationException(
+                    $"网关连接超时:{id}",
+                    ex
+                );
+            }
+            catch (SocketException ex)
+            {
+                UpdateOnlineState(
+                    runtime,
+                    false
+                );
+
+                throw new InvalidOperationException(
+                    $"网关连接失败:{id} {ex.Message}",
+                    ex
+                );
+            }
+            catch (Exception ex)
+            {
+                UpdateOnlineState(
+                    runtime,
+                    false
+                );
+
+                throw new InvalidOperationException(
+                    $"网关连接发生意外异常:{id}",
+                    ex
                 );
             }
         }
@@ -319,9 +358,23 @@ namespace PlantMaster.Services
                     cancellationToken
                 );
             }
-            catch
+            catch (OperationCanceledException)
             {
-                // 异常已在统一执行入口记录。
+                throw;
+            }
+            catch (TimeoutException ex)
+            {
+                throw new InvalidOperationException(
+                    $"网关断开超时:{id}",
+                    ex
+                );
+            }
+            catch (Exception ex)
+            {
+                throw new InvalidOperationException(
+                    $"网关断开发生意外异常:{id}",
+                    ex
+                );
             }
         }
 
@@ -377,9 +430,23 @@ namespace PlantMaster.Services
                     observeServiceLifetime: false
                 );
             }
-            catch
+            catch (OperationCanceledException)
             {
-                // 异常已在统一执行入口记录。
+                throw;
+            }
+            catch (TimeoutException ex)
+            {
+                throw new InvalidOperationException(
+                    $"网关资源释放超时:{id}",
+                    ex
+                );
+            }
+            catch (Exception ex)
+            {
+                throw new InvalidOperationException(
+                    $"网关资源释放发生意外异常:{id}",
+                    ex
+                );
             }
         }
 

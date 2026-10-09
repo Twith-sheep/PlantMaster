@@ -1,4 +1,5 @@
 ﻿using PlantMaster.ViewModels;
+using System.ComponentModel;
 using System.Windows;
 
 namespace PlantMaster
@@ -17,6 +18,13 @@ namespace PlantMaster
     /// </summary>
     public partial class MainWindow : Window
     {
+        private readonly App app;
+
+        private bool isClosing;
+
+        private bool allowClose;
+
+
         public MainWindow()
         {
             InitializeComponent();
@@ -26,7 +34,7 @@ namespace PlantMaster
             // 获取程序全局服务
             //
             // 服务在App.xaml.cs中创建
-            App app =
+            app =
                 (App)Application.Current;
 
 
@@ -49,6 +57,48 @@ namespace PlantMaster
                     app.FileDialogService,
                     app.ConfigManager
                 );
+
+
+            Closing += MainWindow_Closing;
+        }
+
+
+        /// <summary>
+        /// 普通窗口关闭时先异步释放网关，再最终保存日志。
+        /// 第二次Closing只负责真正关闭窗口。
+        /// </summary>
+        private async void MainWindow_Closing(
+            object? sender,
+            CancelEventArgs e)
+        {
+            if (allowClose
+                || app.IsShutdownCompleted)
+            {
+                return;
+            }
+
+
+            e.Cancel = true;
+
+            if (isClosing)
+            {
+                return;
+            }
+
+
+            isClosing = true;
+
+            try
+            {
+                await app.ShutdownApplicationAsync();
+            }
+            finally
+            {
+                allowClose = true;
+                isClosing = false;
+
+                Close();
+            }
         }
     }
 }

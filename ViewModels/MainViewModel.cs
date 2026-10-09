@@ -162,26 +162,42 @@ namespace PlantMaster.ViewModels
 
 
             ConnectGatewayCommand =
-                new RelayCommand(
-                    ConnectGateway
+                new AsyncRelayCommand(
+                    ConnectGatewayAsync,
+                    exception => HandleCommandException(
+                        "连接网关",
+                        exception
+                    )
                 );
 
 
             DisconnectGatewayCommand =
-                new RelayCommand(
-                    DisconnectGateway
+                new AsyncRelayCommand(
+                    DisconnectGatewayAsync,
+                    exception => HandleCommandException(
+                        "断开网关",
+                        exception
+                    )
                 );
 
 
             DeleteGatewayCommand =
-                new RelayCommand(
-                    DeleteGateway
+                new AsyncRelayCommand(
+                    DeleteGatewayAsync,
+                    exception => HandleCommandException(
+                        "删除网关",
+                        exception
+                    )
                 );
 
 
             DeleteSelectedGatewayCommand =
-                new RelayCommand(
-                    DeleteSelectedGateway
+                new AsyncRelayCommand(
+                    DeleteSelectedGatewayAsync,
+                    exception => HandleCommandException(
+                        "批量删除网关",
+                        exception
+                    )
                 );
 
 
@@ -391,7 +407,7 @@ namespace PlantMaster.ViewModels
         ///
         /// 连接逻辑交给GatewayService
         /// </summary>
-        private async void ConnectGateway()
+        private async Task ConnectGatewayAsync()
         {
             GatewayViewModel[] selectedGateways =
                 Gateways
@@ -430,7 +446,7 @@ namespace PlantMaster.ViewModels
         /// <summary>
         /// 断开选中的网关
         /// </summary>
-        private async void DisconnectGateway()
+        private async Task DisconnectGatewayAsync()
         {
             Task[] disconnectTasks =
                 Gateways
@@ -459,8 +475,8 @@ namespace PlantMaster.ViewModels
         /// 再删除配置
         /// 最后删除界面
         /// </summary>
-        private async void DeleteGateway(
-    object parameter)
+        private async Task DeleteGatewayAsync(
+            object? parameter)
         {
 
             if (parameter is not GatewayViewModel gatewayVM)
@@ -481,44 +497,29 @@ namespace PlantMaster.ViewModels
 
 
 
-            try
-            {
-
-                //先释放运行资源
-                await gatewayService.RemoveGateway(
-                    id
-                );
+            // 只有运行资源释放成功后，才继续删除配置和界面状态。
+            // GatewayService异常会传播到AsyncRelayCommand边界。
+            await gatewayService.RemoveGateway(
+                id
+            );
 
 
 
-                //删除配置
-                configManager.RemoveGateway(
-                    id
-                );
+            configManager.RemoveGateway(
+                id
+            );
 
 
 
-                //删除界面数据
-                Gateways.Remove(
-                    gatewayVM
-                );
+            Gateways.Remove(
+                gatewayVM
+            );
 
 
 
-                logService.Info(
-                    $"删除网关:{id}"
-                );
-
-
-            }
-            catch (Exception ex)
-            {
-
-                logService.Error(
-                    $"删除失败:{ex.Message}"
-                );
-
-            }
+            logService.Info(
+                $"删除网关:{id}"
+            );
 
         }
 
@@ -553,8 +554,8 @@ namespace PlantMaster.ViewModels
         ///
         /// 删除界面显示
         /// </summary>
-        private async void DeleteSelectedGateway(
-            object parameter)
+        private async Task DeleteSelectedGatewayAsync(
+            object? parameter)
         {
 
             var removeList =
@@ -634,6 +635,28 @@ namespace PlantMaster.ViewModels
                 $"批量删除完成:{removeList.Count}"
             );
 
+        }
+
+
+
+
+        private void HandleCommandException(
+            string operationName,
+            Exception exception)
+        {
+            if (exception is OperationCanceledException)
+            {
+                logService.Warn(
+                    $"{operationName}已取消:{exception.Message}"
+                );
+
+                return;
+            }
+
+
+            logService.Error(
+                $"{operationName}失败:{exception.Message}"
+            );
         }
 
     }
