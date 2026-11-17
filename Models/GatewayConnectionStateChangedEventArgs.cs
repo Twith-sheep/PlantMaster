@@ -16,7 +16,7 @@ namespace PlantMaster.Models
             bool isOnline)
         {
             GatewayId = gatewayId;
-            IsOnline = isOnline;
+            IsOnline = isOnline;//1
         }
     }
 }

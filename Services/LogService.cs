@@ -19,10 +19,18 @@ namespace PlantMaster.Services
     /// </summary>
     public class LogService
     {
+        /*
+         * PlantMaster 使用 ConcurrentQueue<LogItem> 主要有三个原因：
+        1. 线程安全：多个 PLC 网关同时产生日志，不会因为同时操作队列而发生数据竞争。
+        2. 减少阻塞：产生日志时只需快速入队，不必等待磁盘写入。
+        3. 提高效率：后台统一批量保存日志，减少频繁写文件的开销。
+        一句话总结：使用线程安全队列，实现日志生成与保存分离，提高多线程环境下的安全性和运行效率。
+        */
         private readonly ConcurrentQueue<LogItem> pendingLogs;
 
 
         /// <summary>
+        /// event 只能在定义他的类中触发，外部只能订阅和取消订阅。
         /// 新日志事件。事件在产生日志的线程上发布，
         /// 订阅者必须自行切换到需要的同步上下文。
         /// </summary>
